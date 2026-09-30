@@ -318,6 +318,7 @@ ol.steps li{margin-bottom:6px}
     <div class="err" id="loginErr" role="alert"></div>
     <button class="btn" style="width:100%">Entrar</button>
     <p style="text-align:center;margin-top:12px"><button type="button" class="btn ghost sm" data-act="resetSenha">Esqueci minha senha</button></p>
+    <p class="hint" style="text-align:center">O acesso é criado no Firebase, em Authentication &gt; Usuários.</p>
   </form>
 </div></div>
 
@@ -402,7 +403,7 @@ const DEFAULT_CFG={valorHora:12,incluirSecagem:false,multiplicador:2.5,metaMensa
 const COLS=['pecas','materiais','horas','producoes','vendas','lotes','despesas'];
 const S={pecas:[],materiais:[],horas:[],producoes:[],vendas:[],lotes:[],despesas:[],cfg:{...DEFAULT_CFG}};
 const UI={pecas:{q:'',cat:''},mat:{q:'',cat:''},horas:{per:'30',peca:'',etapa:''},vendas:{per:'mes'},rel:{per:'mes'}};
-let page='painel',ready=false,formFoto='',fs=null,auth=null,unsubs=[];
+let fbErro=null,page='painel',ready=false,formFoto='',fs=null,auth=null,unsubs=[];
 const REL={};
 
 const peca=id=>S.pecas.find(p=>p.id===id);
@@ -478,7 +479,7 @@ const store={
 };
 function subscribe(){
   unsub();
-  COLS.forEach(c=>unsubs.push(fs.collection(c).onSnapshot(s=>{S[c]=s.docs.map(d=>({...d.data(),id:d.id}));render()},err=>{console.error(err);toast('Sem permissão ou sem conexão com o Firebase')})));
+  COLS.forEach(c=>unsubs.push(fs.collection(c).onSnapshot(s=>{S[c]=s.docs.map(d=>({...d.data(),id:d.id}));render()},err=>{console.error(err);fbErro={code:err.code||'',msg:err.message||''};render()})));
   unsubs.push(fs.collection('config').doc('geral').onSnapshot(d=>{S.cfg={...DEFAULT_CFG,...(d.exists?d.data():{})};render()}));
 }
 function unsub(){unsubs.forEach(f=>f());unsubs=[]}
@@ -559,11 +560,11 @@ function setUI(k,v){const [a,b]=k.split('.');UI[a][b]=v;render()}
 function render(){
   if(!ready)return;
   const a=document.activeElement,id=a&&a.id&&$('#main').contains(a)?a.id:null,ss=id?a.selectionStart:null;
-  $('#main').innerHTML=PAGES[page]();
+  $('#main').innerHTML=bannerFb()+PAGES[page]();
   const low=S.materiais.filter(isLow).length;
   $('#nav').innerHTML=NAV.map(([id,l,i,c])=>`<a href="#/${id}" class="c-${c}" ${page===id?'aria-current="page"':''}><span class="ic">${ic(i)}</span><span class="lbl">${l}</span>${id==='materiais'&&low>0?`<span class="badge" title="${low} material(is) para repor">${low}</span>`:''}</a>`).join('');
   $('#sidebtm').innerHTML=(USE_FB
-    ?`<div class="sync">Sincronizado com o Firebase</div><button class="btn ghost sm" data-act="sair">${ic('out')} Sair</button>`
+    ?`<div class="sync">Sincronizado com o Firebase${auth&&auth.currentUser?`<br><small>${esc(auth.currentUser.email)}</small>`:''}</div><button class="btn ghost sm" data-act="sair">${ic('out')} Sair</button>`
     :`<div class="sync demo">Modo demonstração: dados só neste navegador</div>`)+sideExtra();
   if(id){const n=document.getElementById(id);if(n){n.focus();try{if(ss!=null)n.setSelectionRange(ss,ss)}catch(e){}}}
   renderChip();
@@ -1025,6 +1026,19 @@ PAGES.relatorios=()=>{
 A.csv=d=>csv(REL[d.k],'ateliermf-'+d.k+'-'+today());
 A.imprimir=()=>window.print();
 
+/* ============================ AVISO DE ERRO DO FIREBASE ============================ */
+function bannerFb(){
+  if(!fbErro)return '';
+  const email=auth&&auth.currentUser?auth.currentUser.email:'';
+  const perm=fbErro.code==='permission-denied';
+  const semBanco=fbErro.code==='not-found'||/does not exist|database/i.test(fbErro.msg)&&!perm;
+  const msg=perm?`O Firestore bloqueou o acesso para <b>${esc(email)}</b>. Em Firestore Database > Regras, clique no botão abaixo para copiar as regras (já com o seu e-mail de login), cole lá e clique em Publicar. Depois recarregue esta página.`
+    :semBanco?'O banco Firestore ainda não foi criado. Em Firebase > Firestore Database, clique em Criar banco de dados e depois recarregue esta página.'
+    :`Não foi possível ler os dados do Firebase (${esc(fbErro.code||'erro')}). Verifique a internet e recarregue a página.`;
+  return `<div class="card c-rosa" style="background:var(--cb);border:0;margin-bottom:18px"><b style="color:var(--cf)">Atenção</b><p style="margin:6px 0 10px;color:var(--vinho)">${msg}</p>${perm?`<button class="btn sm" data-act="copiarRegrasEmail">${ic('copy')} Copiar regras com o meu e-mail</button>`:''} <button class="btn ghost sm" onclick="location.reload()">Recarregar</button></div>`;
+}
+A.copiarRegrasEmail=async()=>{const email=auth&&auth.currentUser?auth.currentUser.email:'SEU-EMAIL@EXEMPLO.COM';try{await navigator.clipboard.writeText(RULES.replace('SEU-EMAIL@EXEMPLO.COM',email));toast('Regras copiadas')}catch(e){toast('Não foi possível copiar')}};
+
 /* ============================ TEMA ============================ */
 const TEMA_KEY='ateliermf:tema',TEMA_NOME={auto:'automático',claro:'claro',escuro:'escuro'};
 const getTema=()=>{try{return localStorage.getItem(TEMA_KEY)||'auto'}catch(e){return'auto'}};
@@ -1226,7 +1240,19 @@ A.limpar=async()=>{if(await ask('Apagar tudo?','Todos os dados salvos neste nave
 A.exemplo=async()=>{if(await ask('Recarregar exemplos?','Os dados atuais deste navegador serão substituídos pelos dados de exemplo.','Substituir')){seedDemo();persistLocal();render();toast('Dados de exemplo carregados')}};
 
 /* ============================ login / Firebase ============================ */
-FORMS.login=async f=>{const fd=new FormData(f);$('#loginErr').textContent='';try{await auth.signInWithEmailAndPassword(fd.get('email'),fd.get('senha'))}catch(e){$('#loginErr').textContent='E-mail ou senha incorretos.'}};
+const ERROS_AUTH={
+  'auth/invalid-credential':'E-mail ou senha incorretos.','auth/wrong-password':'E-mail ou senha incorretos.','auth/invalid-login-credentials':'E-mail ou senha incorretos.',
+  'auth/user-not-found':'Não existe usuário com esse e-mail. Crie o usuário no Firebase, em Authentication > Usuários.',
+  'auth/invalid-email':'E-mail inválido.','auth/user-disabled':'Este usuário foi desativado no Firebase.',
+  'auth/operation-not-allowed':'O login por e-mail e senha está desativado. Ative em Authentication > Método de login.',
+  'auth/unauthorized-domain':'Este endereço não está autorizado. Adicione-o em Authentication > Configurações > Domínios autorizados.',
+  'auth/network-request-failed':'Sem conexão com o Firebase. Verifique a internet.','auth/too-many-requests':'Muitas tentativas. Aguarde alguns minutos.',
+  'auth/operation-not-supported-in-this-environment':'Abra pelo endereço publicado (https), não pelo arquivo no computador.',
+  'auth/invalid-api-key':'A chave do Firebase (apiKey) está inválida. Confira o firebase-config.js.','auth/api-key-not-valid':'A chave do Firebase (apiKey) está inválida. Confira o firebase-config.js.'
+};
+FORMS.login=async f=>{const fd=new FormData(f),el=$('#loginErr');el.textContent='';
+  try{await auth.signInWithEmailAndPassword(fd.get('email').trim(),fd.get('senha'))}
+  catch(e){el.textContent=(ERROS_AUTH[e.code]||'Não foi possível entrar.')+(e.code&&!ERROS_AUTH[e.code]?' ('+e.code+')':'')}};
 A.resetSenha=async()=>{const em=$('#login [name=email]').value.trim();if(!em){$('#loginErr').textContent='Digite seu e-mail para receber o link de redefinição.';return}try{await auth.sendPasswordResetEmail(em);$('#loginErr').textContent='Enviamos um link de redefinição para o seu e-mail.'}catch(e){$('#loginErr').textContent='Não foi possível enviar o e-mail.'}};
 A.sair=()=>auth.signOut();
 A.close=()=>closeModal();

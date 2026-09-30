@@ -1,6 +1,4 @@
-/* Cole aqui o firebaseConfig do seu projeto
-   (Console Firebase > Configurações do projeto > Seus apps > App da Web).
-   Com apiKey vazio o gestor abre em modo demonstração. */
+/* Chaves do projeto Firebase (públicas por natureza; a segurança vem do login e das regras do Firestore). */
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyBdKxJIK5T0u5zCeoAju0M27zx0inZR8xo",
   authDomain: "atelier-90a1e.firebaseapp.com",
